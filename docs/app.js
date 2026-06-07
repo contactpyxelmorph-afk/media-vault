@@ -251,7 +251,10 @@ async function apiJson(path, options = {}) {
       detail = JSON.parse(text).detail || text;
     } catch {
     }
-    throw new Error(detail || `HTTP ${response.status}`);
+    const requestError = new Error(detail || `HTTP ${response.status}`);
+    requestError.status = response.status;
+    requestError.detail = detail;
+    throw requestError;
   }
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
@@ -711,10 +714,13 @@ async function recoverPreviousJob(event) {
   } catch (error) {
     delete state.pendingJobs[jobId];
     const message = (error?.message || '').trim();
+    const recoveryMessage = message === 'Not Found'
+      ? 'Recovery endpoint not found. This link is still reaching an old Windows runner. Close the old runner, start the updated runner package, tap Test Link, then recover again.'
+      : error?.status === 404
+        ? `Recovery did not find job ${jobId} on the computer reached by this runner link. Use the same Windows computer and runner folder that contains downloads\\${jobId}.`
+        : runnerHelpMessage(error, 'Recovery request');
     log([
-      message === 'Not Found'
-        ? 'Recovery endpoint not found. Restart the updated Windows runner, tap Test Link, then try Recover again.'
-        : runnerHelpMessage(error, 'Recovery request'),
+      recoveryMessage,
     ]);
   }
 }
