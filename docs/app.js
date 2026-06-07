@@ -343,6 +343,7 @@ function modeLabel(mode) {
     audio: 'MP3 audio',
     mp4: 'MP4 video',
     spatial: 'Spatial stereo',
+    spatial_video: 'Spatial video',
   };
   return labels[mode] || 'MP4 video';
 }
@@ -352,6 +353,7 @@ function fallbackExtensionForMode(mode) {
     audio: 'mp3',
     mp4: 'mp4',
     spatial: 'm4a',
+    spatial_video: 'mp4',
   };
   return extensions[mode] || 'mp4';
 }
@@ -361,6 +363,7 @@ function fallbackMimeForMode(mode) {
     audio: 'audio/mpeg',
     mp4: 'video/mp4',
     spatial: 'audio/mp4',
+    spatial_video: 'video/mp4',
   };
   return mimes[mode] || 'video/mp4';
 }
@@ -382,6 +385,7 @@ function updateDownloadButtonLabel() {
     audio: 'MP3',
     mp4: 'MP4',
     spatial: 'Spatial',
+    spatial_video: 'Spatial MP4',
   };
   const format = labels[selectedDownloadMode()] || 'MP4';
   const scope = selectedNoPlaylist() ? '' : ' Playlist';
@@ -959,14 +963,14 @@ async function startDownload(event) {
     setActiveView('library');
     return;
   }
-  if (mode === 'spatial' && state.runnerSupportsSpatial !== true) {
+  if (['spatial', 'spatial_video'].includes(mode) && state.runnerSupportsSpatial !== true) {
     const online = await checkHealth({ silent: true });
     if (!online) {
-      log(['Spatial stereo download blocked because the runner link is not reachable. Tap Test Link and fix the runner connection first.']);
+      log([`${modeLabel(mode)} download blocked because the runner link is not reachable. Tap Test Link and fix the runner connection first.`]);
       return;
     }
     if (state.runnerSupportsSpatial !== true) {
-      log(['Spatial stereo download blocked because the runner is old. Restart the updated Windows runner, then tap Test Link again.']);
+      log([`${modeLabel(mode)} download blocked because the runner is old. Restart the updated Windows runner, then tap Test Link again.`]);
       return;
     }
   }
