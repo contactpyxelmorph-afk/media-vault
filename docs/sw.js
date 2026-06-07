@@ -1,9 +1,9 @@
-const CACHE_NAME = 'media-vault-shell-v6';
+const CACHE_NAME = 'media-vault-shell-v7';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=6',
-  './app.js?v=6',
+  './styles.css?v=7',
+  './app.js?v=7',
   './manifest.webmanifest',
   './assets/icon.png',
   './assets/favicon.png',

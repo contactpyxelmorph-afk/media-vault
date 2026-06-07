@@ -710,7 +710,12 @@ async function recoverPreviousJob(event) {
     els.recoverJobInput.value = '';
   } catch (error) {
     delete state.pendingJobs[jobId];
-    log([runnerHelpMessage(error, 'Recovery request')]);
+    const message = (error?.message || '').trim();
+    log([
+      message === 'Not Found'
+        ? 'Recovery endpoint not found. Restart the updated Windows runner, tap Test Link, then try Recover again.'
+        : runnerHelpMessage(error, 'Recovery request'),
+    ]);
   }
 }
 
