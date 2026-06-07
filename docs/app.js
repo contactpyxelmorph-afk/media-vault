@@ -14,6 +14,10 @@ const els = {
   testServerButton: document.querySelector('#testServerButton'),
   downloadForm: document.querySelector('#downloadForm'),
   urlInput: document.querySelector('#urlInput'),
+  analyzeForm: document.querySelector('#analyzeForm'),
+  analyzeUrlInput: document.querySelector('#analyzeUrlInput'),
+  analyzeBadge: document.querySelector('#analyzeBadge'),
+  analyzeResults: document.querySelector('#analyzeResults'),
   recoverForm: document.querySelector('#recoverForm'),
   recoverJobInput: document.querySelector('#recoverJobInput'),
   scanRecoverButton: document.querySelector('#scanRecoverButton'),
@@ -58,12 +62,14 @@ const state = {
   runnerStatus: 'unlinked',
   runnerSupportsPlaylists: null,
   runnerSupportsSpatial: null,
+  runnerSupportsAnalyzer: null,
   files: [],
   playlists: [],
   selectedPlaylistId: DEFAULT_PLAYLIST_ID,
   libraryPlaylistId: ALL_PLAYLISTS_ID,
   librarySearchQuery: '',
   activeJob: null,
+  analyzeCandidates: [],
   recoverableJobs: [],
   pendingJobs: {},
   pollTimer: null,
@@ -323,6 +329,16 @@ function formatBytes(bytes) {
   return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+function shortUrl(value) {
+  try {
+    const parsed = new URL(value);
+    const path = parsed.pathname.length > 42 ? `${parsed.pathname.slice(0, 39)}...` : parsed.pathname;
+    return `${parsed.hostname}${path}`;
+  } catch {
+    return (value || '').slice(0, 72);
+  }
+}
+
 function mediaKind(fileName, mimeType = '') {
   const lowered = `${fileName || ''} ${mimeType}`.toLowerCase();
   if (lowered.includes('audio') || lowered.endsWith('.mp3') || lowered.endsWith('.m4a') || lowered.endsWith('.aac')) {
@@ -390,6 +406,55 @@ function updateDownloadButtonLabel() {
   const format = labels[selectedDownloadMode()] || 'MP4';
   const scope = selectedNoPlaylist() ? '' : ' Playlist';
   els.downloadButton.textContent = `Download${scope} ${format}`;
+}
+
+function candidateSummary(candidate) {
+  return [
+    candidate.kind || 'media',
+    candidate.protocol || 'direct',
+    candidate.extension ? `.${candidate.extension}` : '',
+    candidate.quality || '',
+    candidate.language ? `lang ${candidate.language}` : '',
+    candidate.source || '',
+  ].filter(Boolean).join(' · ');
+}
+
+function renderAnalyzeResults() {
+  els.analyzeBadge.textContent = `${state.analyzeCandidates.length} found`;
+  els.analyzeResults.innerHTML = '';
+  if (state.analyzeCandidates.length === 0) {
+    els.analyzeResults.innerHTML = '<p class="empty">No stream candidates detected yet.</p>';
+    return;
+  }
+
+  state.analyzeCandidates.forEach((candidate) => {
+    const row = document.createElement('article');
+    row.className = 'candidate-row';
+    row.innerHTML = `
+      <div class="candidate-copy">
+        <h3></h3>
+        <p class="candidate-meta"></p>
+        <p class="candidate-url"></p>
+      </div>
+      <button type="button"></button>
+    `;
+    row.querySelector('h3').textContent = candidate.title || 'Detected stream';
+    row.querySelector('.candidate-meta').textContent = candidateSummary(candidate);
+    row.querySelector('.candidate-url').textContent = shortUrl(candidate.url);
+    const button = row.querySelector('button');
+    button.textContent = candidate.downloadable === false ? 'Subtitle' : 'Use URL';
+    button.disabled = candidate.downloadable === false;
+    button.addEventListener('click', () => {
+      els.urlInput.value = candidate.url;
+      log([
+        'Stream URL loaded into Media URL.',
+        candidateSummary(candidate),
+        'Choose a format, then tap Download.',
+      ]);
+      els.urlInput.focus();
+    });
+    els.analyzeResults.append(row);
+  });
 }
 
 function playlistIdForFile(file) {
@@ -463,6 +528,7 @@ function renderConnection() {
   if (!state.serverUrl) {
     state.runnerSupportsPlaylists = null;
     state.runnerSupportsSpatial = null;
+    state.runnerSupportsAnalyzer = null;
     els.connectionLabel.textContent = 'Offline player ready';
     setRunnerStatus('unlinked', 'Start the Windows runner app on the home PC, enable the Internet tunnel, then paste the HTTPS Cloudflare link.');
     return;
@@ -470,6 +536,7 @@ function renderConnection() {
   if (isHttpRunnerBlocked()) {
     state.runnerSupportsPlaylists = null;
     state.runnerSupportsSpatial = null;
+    state.runnerSupportsAnalyzer = null;
     els.connectionLabel.textContent = 'Same-Wi-Fi HTTP link blocked';
     setRunnerStatus('blocked', blockedHttpRunnerMessage());
     return;
@@ -644,6 +711,7 @@ async function checkHealth({ silent = false } = {}) {
   if (isHttpRunnerBlocked()) {
     state.runnerSupportsPlaylists = null;
     state.runnerSupportsSpatial = null;
+    state.runnerSupportsAnalyzer = null;
     els.connectionLabel.textContent = 'Same-Wi-Fi HTTP link blocked';
     const message = blockedHttpRunnerMessage();
     setRunnerStatus('blocked', message);
@@ -657,6 +725,7 @@ async function checkHealth({ silent = false } = {}) {
     const health = await apiJson('/health');
     state.runnerSupportsPlaylists = health.playlist_files_supported === true;
     state.runnerSupportsSpatial = health.spatial_audio_supported === true;
+    state.runnerSupportsAnalyzer = health.stream_analyzer_supported === true;
     if (!health.ok) {
       els.connectionLabel.textContent = 'Home runner unavailable';
       setRunnerStatus('offline', 'The runner answered, but did not report a healthy status.');
@@ -682,6 +751,7 @@ async function checkHealth({ silent = false } = {}) {
   } catch (error) {
     state.runnerSupportsPlaylists = null;
     state.runnerSupportsSpatial = null;
+    state.runnerSupportsAnalyzer = null;
     els.connectionLabel.textContent = 'Home runner unavailable; saved media still works';
     const message = runnerHelpMessage(error, 'Runner test');
     setRunnerStatus('offline', message);
@@ -708,6 +778,48 @@ function renderJob(job) {
     ...(job.log || []),
     job.error ? `Error: ${job.error}` : '',
   ]);
+}
+
+async function analyzePage(event) {
+  event.preventDefault();
+  const url = els.analyzeUrlInput.value.trim();
+  if (!url) {
+    log(['Paste a page or stream URL to analyze first.']);
+    return;
+  }
+
+  if (state.runnerSupportsAnalyzer !== true) {
+    const online = await checkHealth({ silent: true });
+    if (!online) {
+      log(['Analyze blocked because the runner link is not reachable. Tap Test Link and fix the runner connection first.']);
+      return;
+    }
+    if (state.runnerSupportsAnalyzer !== true) {
+      log(['Analyze blocked because the runner is old. Restart the updated Windows runner, then tap Test Link again.']);
+      return;
+    }
+  }
+
+  els.analyzeBadge.textContent = 'Scanning';
+  state.analyzeCandidates = [];
+  renderAnalyzeResults();
+
+  try {
+    log(['Analyzing page for direct streams, HLS, DASH, and subtitles...']);
+    const result = await apiJson('/api/analyze', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    });
+    state.analyzeCandidates = Array.isArray(result.candidates) ? result.candidates : [];
+    renderAnalyzeResults();
+    log([
+      `Analyzer found ${state.analyzeCandidates.length} candidate${state.analyzeCandidates.length === 1 ? '' : 's'}.`,
+      ...(result.warnings || []),
+    ]);
+  } catch (error) {
+    els.analyzeBadge.textContent = 'Failed';
+    log([runnerHelpMessage(error, 'Analyze request')]);
+  }
 }
 
 function jobMediaItems(job, sourceMode) {
@@ -1179,6 +1291,7 @@ async function init() {
   els.serverForm.addEventListener('submit', saveServer);
   els.testServerButton.addEventListener('click', () => checkHealth({ silent: false }));
   els.downloadForm.addEventListener('submit', startDownload);
+  els.analyzeForm.addEventListener('submit', analyzePage);
   els.recoverForm.addEventListener('submit', recoverPreviousJob);
   els.scanRecoverButton.addEventListener('click', scanRecoverableJobs);
   els.recoverAllButton.addEventListener('click', recoverAllJobs);

@@ -473,6 +473,54 @@ pre {
   gap: 8px;
 }
 
+.candidate-list {
+  display: grid;
+  gap: 8px;
+}
+
+.candidate-row {
+  align-items: center;
+  background: var(--soft);
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px;
+}
+
+.candidate-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.candidate-row h3 {
+  font-size: 15px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.candidate-row p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.candidate-row button {
+  background: var(--accent);
+  border-radius: 8px;
+  color: #ffffff;
+  font-weight: 900;
+  min-height: 44px;
+  padding: 0 13px;
+}
+
+.candidate-row button:disabled {
+  background: var(--soft-strong);
+  color: var(--muted);
+}
+
 .recoverable-row {
   align-items: center;
   background: var(--soft);
@@ -660,6 +708,7 @@ audio {
 @media (max-width: 520px) {
   .inline-control,
   .server-status-row,
+  .candidate-row,
   .recoverable-row,
   .media-controls {
     grid-template-columns: 1fr;
