@@ -23,9 +23,11 @@ How it works:
 - Because GitHub Pages is HTTPS, use the runner's HTTPS Cloudflare link. Browser security may block a plain `http://192.168...` same-Wi-Fi link from an HTTPS PWA.
 - App updates only refresh the cached app shell. They do not clear the media or playlist stores.
 - Each download can be saved as MP4 video or MP3 audio and assigned to a playlist before it starts.
+- For YouTube playlists, choose `Playlist` as the URL type. The runner downloads every item it can access, then the phone saves each returned file into the selected local playlist.
 
 Limits:
 
 - This does not run `yt-dlp` on the iPhone.
+- Playlist downloads can take a long time and can use a lot of phone storage, especially in MP4 mode.
 - iOS can evict browser/PWA storage if the device is low on space.
 - Locked-screen playback in a web app depends on iOS Safari media behavior and is not as controllable as a native app.

@@ -21,6 +21,7 @@ This gives you:
 - MP4/MP3 storage on the phone through IndexedDB
 - phone-local playlists that survive app shell updates
 - per-download choice between MP4 video and MP3 audio
+- single-video or full-playlist downloads from the same URL field
 - playback of already saved files without the PC
 
 New downloads still need the home PC runner to be on. When the phone is on 4G, use the Windows runner's `different Wi-Fi` Cloudflare link in the PWA's Home PC runner field. Because GitHub Pages is HTTPS, prefer that HTTPS Cloudflare link over a plain same-Wi-Fi `http://192.168...` link.
@@ -118,6 +119,8 @@ The backend supports these download modes:
 - `audio`: MP3 extraction with `ffmpeg`.
 
 The free PWA uses only `mp4` and `audio`.
+
+For a YouTube playlist URL, choose `Playlist` in the PWA before starting the download. The runner downloads every accessible playlist item, and the phone saves each returned MP4/MP3 file into the selected local playlist.
 
 ## Useful Checks
 

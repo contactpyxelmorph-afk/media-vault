@@ -15,6 +15,7 @@ const els = {
   playlistNameInput: document.querySelector('#playlistNameInput'),
   playlistAddButton: document.querySelector('#playlistAddButton'),
   modeRadios: [...document.querySelectorAll('input[name="downloadMode"]')],
+  scopeRadios: [...document.querySelectorAll('input[name="downloadScope"]')],
   downloadButton: document.querySelector('#downloadButton'),
   jobBadge: document.querySelector('#jobBadge'),
   jobProgress: document.querySelector('#jobProgress'),
@@ -262,8 +263,18 @@ function selectedDownloadMode() {
   return els.modeRadios.find((radio) => radio.checked)?.value || 'mp4';
 }
 
+function selectedDownloadScope() {
+  return els.scopeRadios.find((radio) => radio.checked)?.value || 'single';
+}
+
+function selectedNoPlaylist() {
+  return selectedDownloadScope() !== 'playlist';
+}
+
 function updateDownloadButtonLabel() {
-  els.downloadButton.textContent = selectedDownloadMode() === 'audio' ? 'Download MP3' : 'Download MP4';
+  const format = selectedDownloadMode() === 'audio' ? 'MP3' : 'MP4';
+  const scope = selectedNoPlaylist() ? '' : ' Playlist';
+  els.downloadButton.textContent = `Download${scope} ${format}`;
 }
 
 function playlistIdForFile(file) {
@@ -472,51 +483,119 @@ function renderJob(job) {
   ]);
 }
 
+function jobMediaItems(job, sourceMode) {
+  const fallbackName = job.playback_name || job.output_name || `${job.id}.${sourceMode === 'audio' ? 'mp3' : 'mp4'}`;
+  const files = Array.isArray(job.files) && job.files.length > 0
+    ? job.files
+    : [{
+        name: job.output_name || fallbackName,
+        relative_path: job.output_relative_path,
+        playback_name: job.playback_name || fallbackName,
+        playback_relative_path: job.playback_relative_path,
+        file_url: job.file_url,
+        playback_url: job.playback_url,
+      }];
+
+  return files.map((file, index) => {
+    const mediaName = file.playback_name || file.name || fallbackName;
+    return {
+      index,
+      mediaName,
+      titleName: file.name || mediaName,
+      mediaUrl: file.playback_url || file.file_url,
+      relativePath: file.playback_relative_path || file.relative_path || mediaName,
+    };
+  }).filter((item) => item.mediaUrl);
+}
+
+function sourceUrlForJobItem(job, item) {
+  if (job.no_playlist !== false) {
+    return job.url;
+  }
+  return `${job.url}#${item.relativePath || item.mediaName || item.index}`;
+}
+
+function hasDuplicateMedia(mode, sourceUrl, fileName, isPlaylistJob) {
+  const normalizedName = fileName.toLowerCase();
+  return state.files.some((file) => {
+    if (mediaModeForFile(file) !== mode) {
+      return false;
+    }
+    if (file.sourceUrl === sourceUrl) {
+      return true;
+    }
+    return isPlaylistJob && (file.fileName || '').toLowerCase() === normalizedName;
+  });
+}
+
 async function downloadCompletedJob(job) {
   const pending = state.pendingJobs[job.id] || {};
   const sourceMode = job.mode || pending.mode || 'mp4';
   const playlistId = pending.playlistId || state.selectedPlaylistId || DEFAULT_PLAYLIST_ID;
-  const existing = state.files.find((file) => file.sourceUrl === job.url && mediaModeForFile(file) === sourceMode);
-  if (existing) {
-    delete state.pendingJobs[job.id];
-    log([`That URL is already saved as ${modeLabel(sourceMode)} on this phone.`]);
-    return;
-  }
-
-  const mediaUrl = job.playback_url || job.file_url;
-  const mediaName = job.playback_name || job.output_name || `${job.id}.${sourceMode === 'audio' ? 'mp3' : 'mp4'}`;
-  if (!mediaUrl) {
+  const isPlaylistJob = job.no_playlist === false || pending.noPlaylist === false;
+  const mediaItems = jobMediaItems(job, sourceMode);
+  if (mediaItems.length === 0) {
     throw new Error('The runner did not return a media file URL.');
   }
 
-  log([`Saving ${modeLabel(sourceMode)} into ${playlistName(playlistId)}...`, ...(job.log || [])]);
-  const response = await fetch(mediaUrl, {
-    headers: authHeaders({ Accept: '*/*' }),
-  });
-  if (!response.ok) {
-    throw new Error(`Could not save media: HTTP ${response.status}`);
+  let saved = 0;
+  let skipped = 0;
+  let totalBytes = 0;
+
+  for (const item of mediaItems) {
+    const mediaName = item.mediaName || `${job.id}-${item.index}.${sourceMode === 'audio' ? 'mp3' : 'mp4'}`;
+    const fileName = safeName(mediaName);
+    const sourceUrl = sourceUrlForJobItem(job, item);
+
+    if (hasDuplicateMedia(sourceMode, sourceUrl, fileName, isPlaylistJob)) {
+      skipped += 1;
+      continue;
+    }
+
+    log([
+      `Saving ${saved + skipped + 1}/${mediaItems.length} into ${playlistName(playlistId)}...`,
+      mediaName,
+      ...(job.log || []),
+    ]);
+    const response = await fetch(item.mediaUrl, {
+      headers: authHeaders({ Accept: '*/*' }),
+    });
+    if (!response.ok) {
+      throw new Error(`Could not save ${mediaName}: HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const record = {
+      id: `${job.id}-${item.index}-${Date.now()}`,
+      jobId: job.id,
+      sourceUrl,
+      sourcePageUrl: job.url,
+      sourceMode,
+      playlistId,
+      title: titleFromFileName(item.titleName || mediaName),
+      fileName,
+      mimeType: blob.type || (sourceMode === 'audio' ? 'audio/mpeg' : 'video/mp4'),
+      size: blob.size,
+      blob,
+      createdAt: new Date().toISOString(),
+    };
+    await saveFileRecord(record);
+    state.files.push(record);
+    saved += 1;
+    totalBytes += blob.size;
   }
-  const blob = await response.blob();
-  const record = {
-    id: `${job.id}-${Date.now()}`,
-    jobId: job.id,
-    sourceUrl: job.url,
-    sourceMode,
-    playlistId,
-    title: titleFromFileName(job.output_name || mediaName),
-    fileName: safeName(mediaName),
-    mimeType: blob.type || (sourceMode === 'audio' ? 'audio/mpeg' : 'video/mp4'),
-    size: blob.size,
-    blob,
-    createdAt: new Date().toISOString(),
-  };
-  await saveFileRecord(record);
+
   delete state.pendingJobs[job.id];
   state.libraryPlaylistId = playlistId;
   renderPlaylistControls();
   await refreshFiles();
   setActiveView('library');
-  log(['Saved into this phone. It will play without the PC.']);
+  log([
+    saved > 0
+      ? `Saved ${saved} file${saved === 1 ? '' : 's'} (${formatBytes(totalBytes)}) into this phone.`
+      : 'No new files saved; everything was already in this phone library.',
+    skipped > 0 ? `Skipped ${skipped} duplicate file${skipped === 1 ? '' : 's'}.` : '',
+    'Saved files will play without the PC.',
+  ]);
 }
 
 async function pollJob(jobId) {
@@ -543,12 +622,13 @@ async function startDownload(event) {
   event.preventDefault();
   const url = els.urlInput.value.trim();
   const mode = selectedDownloadMode();
+  const noPlaylist = selectedNoPlaylist();
   const playlistId = state.selectedPlaylistId || DEFAULT_PLAYLIST_ID;
   if (!url) {
     log(['Paste a URL first.']);
     return;
   }
-  if (state.files.some((file) => file.sourceUrl === url && mediaModeForFile(file) === mode)) {
+  if (noPlaylist && state.files.some((file) => file.sourceUrl === url && mediaModeForFile(file) === mode)) {
     log([`That URL is already saved as ${modeLabel(mode)} on this phone.`]);
     setActiveView('library');
     return;
@@ -558,13 +638,16 @@ async function startDownload(event) {
   try {
     const job = await apiJson('/api/jobs', {
       method: 'POST',
-      body: JSON.stringify({ url, mode, client_id: state.clientId }),
+      body: JSON.stringify({ url, mode, no_playlist: noPlaylist, client_id: state.clientId }),
     });
-    state.pendingJobs[job.id] = { playlistId, mode };
+    state.pendingJobs[job.id] = { playlistId, mode, noPlaylist };
     els.urlInput.value = '';
     state.activeJob = job;
     renderJob(job);
-    log([`Runner started ${modeLabel(mode)} download for ${playlistName(playlistId)}.`, ...(job.log || [])]);
+    log([
+      `Runner started ${noPlaylist ? 'single' : 'playlist'} ${modeLabel(mode)} download for ${playlistName(playlistId)}.`,
+      ...(job.log || []),
+    ]);
     await pollJob(job.id);
   } catch (error) {
     log([error.message || 'Could not start download.']);
@@ -749,6 +832,7 @@ async function init() {
   });
   els.playlistAddButton.addEventListener('click', createPlaylist);
   els.modeRadios.forEach((radio) => radio.addEventListener('change', updateDownloadButtonLabel));
+  els.scopeRadios.forEach((radio) => radio.addEventListener('change', updateDownloadButtonLabel));
   els.closePlayerButton.addEventListener('click', closePlayer);
   els.modeButton.addEventListener('click', switchPlayerMode);
   els.nextButton.addEventListener('click', playNext);
