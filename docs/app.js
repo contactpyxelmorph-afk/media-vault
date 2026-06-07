@@ -1,0 +1,768 @@
+const DB_NAME = 'media-vault-pwa';
+const DB_VERSION = 2;
+const CLIENT_KEY = 'client-id';
+const SERVER_KEY = 'server-config';
+const DEFAULT_PLAYLIST_ID = 'main-library';
+const ALL_PLAYLISTS_ID = 'all';
+
+const els = {
+  connectionLabel: document.querySelector('#connectionLabel'),
+  serverForm: document.querySelector('#serverForm'),
+  serverInput: document.querySelector('#serverInput'),
+  downloadForm: document.querySelector('#downloadForm'),
+  urlInput: document.querySelector('#urlInput'),
+  playlistSelect: document.querySelector('#playlistSelect'),
+  playlistNameInput: document.querySelector('#playlistNameInput'),
+  playlistAddButton: document.querySelector('#playlistAddButton'),
+  modeRadios: [...document.querySelectorAll('input[name="downloadMode"]')],
+  downloadButton: document.querySelector('#downloadButton'),
+  jobBadge: document.querySelector('#jobBadge'),
+  jobProgress: document.querySelector('#jobProgress'),
+  logBox: document.querySelector('#logBox'),
+  storageLabel: document.querySelector('#storageLabel'),
+  libraryPlaylistSelect: document.querySelector('#libraryPlaylistSelect'),
+  libraryList: document.querySelector('#libraryList'),
+  tabs: [...document.querySelectorAll('.tab')],
+  views: {
+    download: document.querySelector('#downloadView'),
+    library: document.querySelector('#libraryView'),
+  },
+  playerScreen: document.querySelector('#playerScreen'),
+  closePlayerButton: document.querySelector('#closePlayerButton'),
+  playerCount: document.querySelector('#playerCount'),
+  playerTitle: document.querySelector('#playerTitle'),
+  modeButton: document.querySelector('#modeButton'),
+  videoPlayer: document.querySelector('#videoPlayer'),
+  audioPlayer: document.querySelector('#audioPlayer'),
+  audioArtwork: document.querySelector('#audioArtwork'),
+  previousButton: document.querySelector('#previousButton'),
+  nextButton: document.querySelector('#nextButton'),
+};
+
+const state = {
+  db: null,
+  clientId: '',
+  serverUrl: '',
+  apiToken: '',
+  files: [],
+  playlists: [],
+  selectedPlaylistId: DEFAULT_PLAYLIST_ID,
+  libraryPlaylistId: ALL_PLAYLISTS_ID,
+  activeJob: null,
+  pendingJobs: {},
+  pollTimer: null,
+  objectUrl: '',
+  currentFile: null,
+  currentIndex: -1,
+  playQueue: [],
+  playerMode: 'video',
+};
+
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      const tx = request.transaction;
+      let files;
+      if (!db.objectStoreNames.contains('files')) {
+        files = db.createObjectStore('files', { keyPath: 'id' });
+      } else {
+        files = tx.objectStore('files');
+      }
+      if (!files.indexNames.contains('sourceUrl')) {
+        files.createIndex('sourceUrl', 'sourceUrl', { unique: false });
+      }
+      if (!files.indexNames.contains('createdAt')) {
+        files.createIndex('createdAt', 'createdAt', { unique: false });
+      }
+      if (!files.indexNames.contains('playlistId')) {
+        files.createIndex('playlistId', 'playlistId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('settings')) {
+        db.createObjectStore('settings', { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains('playlists')) {
+        const playlists = db.createObjectStore('playlists', { keyPath: 'id' });
+        playlists.createIndex('createdAt', 'createdAt', { unique: false });
+      }
+    };
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+function transact(storeName, mode, action) {
+  return new Promise((resolve, reject) => {
+    const tx = state.db.transaction(storeName, mode);
+    const store = tx.objectStore(storeName);
+    const request = action(store);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+async function getSetting(key, fallback = null) {
+  const item = await transact('settings', 'readonly', (store) => store.get(key));
+  return item?.value ?? fallback;
+}
+
+async function setSetting(key, value) {
+  await transact('settings', 'readwrite', (store) => store.put({ key, value }));
+}
+
+async function getAllFiles() {
+  const files = await transact('files', 'readonly', (store) => store.getAll());
+  return files.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
+async function saveFileRecord(file) {
+  await transact('files', 'readwrite', (store) => store.put(file));
+}
+
+async function deleteFileRecord(id) {
+  await transact('files', 'readwrite', (store) => store.delete(id));
+}
+
+async function getAllPlaylists() {
+  const playlists = await transact('playlists', 'readonly', (store) => store.getAll());
+  return playlists.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
+async function getPlaylist(id) {
+  return transact('playlists', 'readonly', (store) => store.get(id));
+}
+
+async function savePlaylistRecord(playlist) {
+  await transact('playlists', 'readwrite', (store) => store.put(playlist));
+}
+
+async function ensureDefaultPlaylist() {
+  const existing = await getPlaylist(DEFAULT_PLAYLIST_ID);
+  if (existing) {
+    return;
+  }
+  await savePlaylistRecord({
+    id: DEFAULT_PLAYLIST_ID,
+    name: 'Main Library',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  });
+}
+
+function makeClientId() {
+  return `pwa-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeServerUrl(value) {
+  return value.trim().replace(/\/+$/, '');
+}
+
+function parseServerLink(value) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { serverUrl: '', apiToken: '' };
+  }
+  const parsed = new URL(trimmed);
+  const token = parsed.searchParams.get('token') || '';
+  parsed.searchParams.delete('token');
+  return { serverUrl: normalizeServerUrl(parsed.toString()), apiToken: token };
+}
+
+function serverLinkForDisplay() {
+  if (!state.serverUrl) {
+    return '';
+  }
+  if (!state.apiToken) {
+    return state.serverUrl;
+  }
+  const parsed = new URL(state.serverUrl);
+  parsed.searchParams.set('token', state.apiToken);
+  return parsed.toString();
+}
+
+function authHeaders(extra = {}) {
+  return {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    ...(state.apiToken ? { 'X-Api-Token': state.apiToken } : {}),
+    ...(state.clientId ? { 'X-Client-Id': state.clientId } : {}),
+    ...extra,
+  };
+}
+
+async function apiJson(path, options = {}) {
+  if (!state.serverUrl) {
+    throw new Error('Save the home PC runner link first.');
+  }
+  const response = await fetch(`${state.serverUrl}${path}`, {
+    ...options,
+    headers: authHeaders(options.headers || {}),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let detail = text;
+    try {
+      detail = JSON.parse(text).detail || text;
+    } catch {
+    }
+    throw new Error(detail || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+function log(lines) {
+  els.logBox.textContent = lines.filter(Boolean).slice(-18).join('\n') || 'Waiting for a download job.';
+}
+
+function titleFromFileName(name) {
+  return (name || 'Untitled media')
+    .replace(/\.[^.]+$/, '')
+    .replace(/\s+\[[^\]]+\]$/, '')
+    .replace(/_/g, ' ');
+}
+
+function safeName(name) {
+  return (name || `download-${Date.now()}.mp4`).replace(/[^a-zA-Z0-9._-]+/g, '_');
+}
+
+function formatBytes(bytes) {
+  if (!bytes) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function mediaKind(fileName, mimeType = '') {
+  const lowered = `${fileName || ''} ${mimeType}`.toLowerCase();
+  if (lowered.includes('audio') || lowered.endsWith('.mp3') || lowered.endsWith('.m4a') || lowered.endsWith('.aac')) {
+    return 'audio';
+  }
+  return 'video';
+}
+
+function mediaModeForFile(file) {
+  if (file.sourceMode) {
+    return file.sourceMode;
+  }
+  return mediaKind(file.fileName, file.mimeType) === 'audio' ? 'audio' : 'mp4';
+}
+
+function modeLabel(mode) {
+  return mode === 'audio' ? 'MP3 audio' : 'MP4 video';
+}
+
+function selectedDownloadMode() {
+  return els.modeRadios.find((radio) => radio.checked)?.value || 'mp4';
+}
+
+function updateDownloadButtonLabel() {
+  els.downloadButton.textContent = selectedDownloadMode() === 'audio' ? 'Download MP3' : 'Download MP4';
+}
+
+function playlistIdForFile(file) {
+  return file.playlistId || DEFAULT_PLAYLIST_ID;
+}
+
+function playlistName(id) {
+  return state.playlists.find((playlist) => playlist.id === id)?.name || 'Main Library';
+}
+
+function currentLibraryFiles() {
+  if (state.libraryPlaylistId === ALL_PLAYLISTS_ID) {
+    return state.files;
+  }
+  return state.files.filter((file) => playlistIdForFile(file) === state.libraryPlaylistId);
+}
+
+function makePlaylistId() {
+  return `playlist-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function fillPlaylistSelect(select, includeAll = false) {
+  select.innerHTML = '';
+  if (includeAll) {
+    const option = document.createElement('option');
+    option.value = ALL_PLAYLISTS_ID;
+    option.textContent = 'All playlists';
+    select.append(option);
+  }
+  state.playlists.forEach((playlist) => {
+    const option = document.createElement('option');
+    option.value = playlist.id;
+    option.textContent = playlist.name;
+    select.append(option);
+  });
+}
+
+function setActiveView(viewName) {
+  els.tabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.view === viewName));
+  Object.entries(els.views).forEach(([name, view]) => view.classList.toggle('active', name === viewName));
+}
+
+function renderConnection() {
+  els.serverInput.value = serverLinkForDisplay();
+  els.connectionLabel.textContent = state.serverUrl
+    ? `Runner set: ${state.serverUrl}`
+    : 'Offline player ready';
+}
+
+function renderPlaylistControls() {
+  fillPlaylistSelect(els.playlistSelect);
+  fillPlaylistSelect(els.libraryPlaylistSelect, true);
+
+  if (!state.playlists.some((playlist) => playlist.id === state.selectedPlaylistId)) {
+    state.selectedPlaylistId = DEFAULT_PLAYLIST_ID;
+  }
+  if (
+    state.libraryPlaylistId !== ALL_PLAYLISTS_ID
+    && !state.playlists.some((playlist) => playlist.id === state.libraryPlaylistId)
+  ) {
+    state.libraryPlaylistId = ALL_PLAYLISTS_ID;
+  }
+
+  els.playlistSelect.value = state.selectedPlaylistId;
+  els.libraryPlaylistSelect.value = state.libraryPlaylistId;
+}
+
+function renderLibrary() {
+  const visibleFiles = currentLibraryFiles();
+  els.storageLabel.textContent = state.libraryPlaylistId === ALL_PLAYLISTS_ID
+    ? `${state.files.length} file${state.files.length === 1 ? '' : 's'}`
+    : `${visibleFiles.length} / ${state.files.length}`;
+
+  if (visibleFiles.length === 0) {
+    els.libraryList.innerHTML = state.files.length === 0
+      ? '<p class="empty">No files saved on this phone yet.</p>'
+      : '<p class="empty">No files saved in this playlist yet.</p>';
+    return;
+  }
+
+  els.libraryList.innerHTML = '';
+  visibleFiles.forEach((file) => {
+    const row = document.createElement('article');
+    row.className = 'media-row';
+    row.innerHTML = `
+      <h3></h3>
+      <div class="media-meta">
+        <span class="playlist-pill"></span>
+        <p></p>
+      </div>
+      <div class="field-group">
+        <label>Playlist</label>
+        <select class="playlist-move"></select>
+      </div>
+      <input class="rename-input" />
+      <div class="row-actions">
+        <button class="play" type="button">Play</button>
+        <button class="rename" type="button">Rename</button>
+        <button class="delete" type="button">Delete</button>
+      </div>
+    `;
+    row.querySelector('h3').textContent = file.title;
+    row.querySelector('.playlist-pill').textContent = playlistName(playlistIdForFile(file));
+    row.querySelector('p').textContent = `${modeLabel(mediaModeForFile(file))} · ${formatBytes(file.size)} · ${file.fileName}`;
+    const input = row.querySelector('.rename-input');
+    input.value = file.title;
+    const moveSelect = row.querySelector('.playlist-move');
+    fillPlaylistSelect(moveSelect);
+    moveSelect.value = playlistIdForFile(file);
+    moveSelect.addEventListener('change', async () => {
+      file.playlistId = moveSelect.value || DEFAULT_PLAYLIST_ID;
+      await saveFileRecord(file);
+      await refreshFiles();
+    });
+    row.querySelector('.play').addEventListener('click', () => playFile(file, 0, true, currentLibraryFiles()));
+    row.querySelector('.rename').addEventListener('click', async () => {
+      if (!row.classList.contains('editing')) {
+        row.classList.add('editing');
+        input.focus();
+        return;
+      }
+      file.title = input.value.trim() || 'Untitled media';
+      await saveFileRecord(file);
+      await refreshFiles();
+    });
+    row.querySelector('.delete').addEventListener('click', async () => {
+      if (!confirm(`Delete "${file.title}" from this phone?`)) {
+        return;
+      }
+      await deleteFileRecord(file.id);
+      await refreshFiles();
+    });
+    els.libraryList.append(row);
+  });
+}
+
+async function refreshFiles() {
+  state.files = await getAllFiles();
+  renderLibrary();
+}
+
+async function refreshPlaylists() {
+  await ensureDefaultPlaylist();
+  state.playlists = await getAllPlaylists();
+  renderPlaylistControls();
+  renderLibrary();
+}
+
+async function createPlaylist() {
+  const name = els.playlistNameInput.value.trim();
+  if (!name) {
+    log(['Enter a playlist name first.']);
+    return;
+  }
+
+  const existing = state.playlists.find((playlist) => playlist.name.toLowerCase() === name.toLowerCase());
+  if (existing) {
+    state.selectedPlaylistId = existing.id;
+    els.playlistNameInput.value = '';
+    renderPlaylistControls();
+    log([`Using existing playlist: ${existing.name}`]);
+    return;
+  }
+
+  const playlist = {
+    id: makePlaylistId(),
+    name,
+    createdAt: new Date().toISOString(),
+  };
+  await savePlaylistRecord(playlist);
+  state.selectedPlaylistId = playlist.id;
+  state.libraryPlaylistId = playlist.id;
+  els.playlistNameInput.value = '';
+  await refreshPlaylists();
+  log([`Playlist created: ${playlist.name}`]);
+}
+
+async function checkHealth() {
+  if (!state.serverUrl) {
+    renderConnection();
+    return;
+  }
+  try {
+    const health = await apiJson('/health');
+    els.connectionLabel.textContent = health.ok ? `Home runner online · yt-dlp ${health.yt_dlp_version || ''}` : 'Home runner unavailable';
+  } catch {
+    els.connectionLabel.textContent = 'Home runner unavailable; saved media still works';
+  }
+}
+
+function renderJob(job) {
+  if (!job) {
+    els.jobBadge.textContent = 'Idle';
+    els.jobProgress.value = 0;
+    log(['Waiting for a download job.']);
+    return;
+  }
+  els.jobBadge.textContent = job.status;
+  els.jobProgress.value = job.progress || 0;
+  log([
+    `${job.status} ${job.percent || '0%'}`,
+    job.speed || '',
+    job.eta ? `ETA ${job.eta}` : '',
+    ...(job.log || []),
+    job.error ? `Error: ${job.error}` : '',
+  ]);
+}
+
+async function downloadCompletedJob(job) {
+  const pending = state.pendingJobs[job.id] || {};
+  const sourceMode = job.mode || pending.mode || 'mp4';
+  const playlistId = pending.playlistId || state.selectedPlaylistId || DEFAULT_PLAYLIST_ID;
+  const existing = state.files.find((file) => file.sourceUrl === job.url && mediaModeForFile(file) === sourceMode);
+  if (existing) {
+    delete state.pendingJobs[job.id];
+    log([`That URL is already saved as ${modeLabel(sourceMode)} on this phone.`]);
+    return;
+  }
+
+  const mediaUrl = job.playback_url || job.file_url;
+  const mediaName = job.playback_name || job.output_name || `${job.id}.${sourceMode === 'audio' ? 'mp3' : 'mp4'}`;
+  if (!mediaUrl) {
+    throw new Error('The runner did not return a media file URL.');
+  }
+
+  log([`Saving ${modeLabel(sourceMode)} into ${playlistName(playlistId)}...`, ...(job.log || [])]);
+  const response = await fetch(mediaUrl, {
+    headers: authHeaders({ Accept: '*/*' }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not save media: HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  const record = {
+    id: `${job.id}-${Date.now()}`,
+    jobId: job.id,
+    sourceUrl: job.url,
+    sourceMode,
+    playlistId,
+    title: titleFromFileName(job.output_name || mediaName),
+    fileName: safeName(mediaName),
+    mimeType: blob.type || (sourceMode === 'audio' ? 'audio/mpeg' : 'video/mp4'),
+    size: blob.size,
+    blob,
+    createdAt: new Date().toISOString(),
+  };
+  await saveFileRecord(record);
+  delete state.pendingJobs[job.id];
+  state.libraryPlaylistId = playlistId;
+  renderPlaylistControls();
+  await refreshFiles();
+  setActiveView('library');
+  log(['Saved into this phone. It will play without the PC.']);
+}
+
+async function pollJob(jobId) {
+  window.clearInterval(state.pollTimer);
+  state.pollTimer = window.setInterval(async () => {
+    try {
+      const job = await apiJson(`/api/jobs/${jobId}`);
+      state.activeJob = job;
+      renderJob(job);
+      if (job.status === 'succeeded') {
+        window.clearInterval(state.pollTimer);
+        await downloadCompletedJob(job);
+      } else if (['failed', 'canceled'].includes(job.status)) {
+        window.clearInterval(state.pollTimer);
+      }
+    } catch (error) {
+      window.clearInterval(state.pollTimer);
+      log([error.message || 'Connection failed.']);
+    }
+  }, 2000);
+}
+
+async function startDownload(event) {
+  event.preventDefault();
+  const url = els.urlInput.value.trim();
+  const mode = selectedDownloadMode();
+  const playlistId = state.selectedPlaylistId || DEFAULT_PLAYLIST_ID;
+  if (!url) {
+    log(['Paste a URL first.']);
+    return;
+  }
+  if (state.files.some((file) => file.sourceUrl === url && mediaModeForFile(file) === mode)) {
+    log([`That URL is already saved as ${modeLabel(mode)} on this phone.`]);
+    setActiveView('library');
+    return;
+  }
+
+  els.downloadButton.disabled = true;
+  try {
+    const job = await apiJson('/api/jobs', {
+      method: 'POST',
+      body: JSON.stringify({ url, mode, client_id: state.clientId }),
+    });
+    state.pendingJobs[job.id] = { playlistId, mode };
+    els.urlInput.value = '';
+    state.activeJob = job;
+    renderJob(job);
+    log([`Runner started ${modeLabel(mode)} download for ${playlistName(playlistId)}.`, ...(job.log || [])]);
+    await pollJob(job.id);
+  } catch (error) {
+    log([error.message || 'Could not start download.']);
+  } finally {
+    els.downloadButton.disabled = false;
+  }
+}
+
+function playlistIndex(file) {
+  const queue = state.playQueue.length > 0 ? state.playQueue : state.files;
+  return queue.findIndex((item) => item.id === file.id);
+}
+
+function activeMedia() {
+  return state.playerMode === 'audio' ? els.audioPlayer : els.videoPlayer;
+}
+
+function configureMediaElement(element, file, startAt = 0, shouldPlay = true) {
+  element.src = state.objectUrl;
+  element.currentTime = startAt;
+  element.loop = (state.playQueue.length || state.files.length) <= 1;
+  element.onended = () => playNext();
+  element.onplay = updateMediaSession;
+  element.onpause = updateMediaSession;
+  if (shouldPlay) {
+    const promise = element.play();
+    if (promise) {
+      promise.catch(() => undefined);
+    }
+  }
+}
+
+function playFile(file, startAt = 0, shouldPlay = true, queue = null) {
+  if (state.objectUrl) {
+    URL.revokeObjectURL(state.objectUrl);
+  }
+  state.playQueue = queue?.length ? [...queue] : [...state.files];
+  state.objectUrl = URL.createObjectURL(file.blob);
+  state.currentFile = file;
+  state.currentIndex = playlistIndex(file);
+  state.playerMode = mediaKind(file.fileName, file.mimeType);
+  els.playerScreen.classList.remove('hidden');
+  els.playerTitle.textContent = file.title;
+  els.playerCount.textContent = `${state.currentIndex + 1} / ${state.playQueue.length}`;
+  applyPlayerMode(startAt, shouldPlay);
+}
+
+function applyPlayerMode(startAt = 0, shouldPlay = true) {
+  const file = state.currentFile;
+  if (!file) {
+    return;
+  }
+  const videoModeAllowed = mediaKind(file.fileName, file.mimeType) === 'video';
+  if (!videoModeAllowed) {
+    state.playerMode = 'audio';
+  }
+  els.modeButton.textContent = state.playerMode === 'audio' && videoModeAllowed ? 'Video' : 'Audio';
+  els.videoPlayer.classList.toggle('hidden', state.playerMode !== 'video');
+  els.audioArtwork.classList.toggle('hidden', state.playerMode !== 'audio');
+  els.audioPlayer.classList.toggle('hidden', state.playerMode !== 'audio');
+
+  els.videoPlayer.pause();
+  els.audioPlayer.pause();
+  const element = activeMedia();
+  configureMediaElement(element, file, startAt, shouldPlay);
+  updateMediaSession();
+}
+
+function switchPlayerMode() {
+  const file = state.currentFile;
+  if (!file || mediaKind(file.fileName, file.mimeType) !== 'video') {
+    return;
+  }
+  const current = activeMedia();
+  const startAt = current.currentTime || 0;
+  const shouldPlay = !current.paused;
+  state.playerMode = state.playerMode === 'audio' ? 'video' : 'audio';
+  applyPlayerMode(startAt, shouldPlay);
+}
+
+function playNext() {
+  const queue = state.playQueue.length > 0 ? state.playQueue : state.files;
+  if (queue.length === 0) {
+    closePlayer();
+    return;
+  }
+  const nextIndex = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
+  playFile(queue[nextIndex % queue.length], 0, true, queue);
+}
+
+function playPrevious() {
+  const queue = state.playQueue.length > 0 ? state.playQueue : state.files;
+  if (queue.length === 0) {
+    closePlayer();
+    return;
+  }
+  const nextIndex = state.currentIndex >= 0 ? state.currentIndex - 1 : queue.length - 1;
+  playFile(queue[(nextIndex + queue.length) % queue.length], 0, true, queue);
+}
+
+function closePlayer() {
+  els.videoPlayer.pause();
+  els.audioPlayer.pause();
+  els.videoPlayer.removeAttribute('src');
+  els.audioPlayer.removeAttribute('src');
+  if (state.objectUrl) {
+    URL.revokeObjectURL(state.objectUrl);
+  }
+  state.objectUrl = '';
+  state.currentFile = null;
+  state.currentIndex = -1;
+  state.playQueue = [];
+  els.playerScreen.classList.add('hidden');
+}
+
+function updateMediaSession() {
+  if (!('mediaSession' in navigator) || !state.currentFile) {
+    return;
+  }
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: state.currentFile.title,
+    artist: 'Media Vault',
+  });
+  navigator.mediaSession.setActionHandler('play', () => activeMedia().play());
+  navigator.mediaSession.setActionHandler('pause', () => activeMedia().pause());
+  navigator.mediaSession.setActionHandler('nexttrack', playNext);
+  navigator.mediaSession.setActionHandler('previoustrack', playPrevious);
+}
+
+async function requestPersistentStorage() {
+  if (!navigator.storage?.persist) {
+    return;
+  }
+  try {
+    const alreadyPersisted = await navigator.storage.persisted();
+    const persisted = alreadyPersisted || await navigator.storage.persist();
+    if (persisted) {
+      log(['Phone storage persistence is enabled for this app.']);
+    }
+  } catch {
+  }
+}
+
+async function saveServer(event) {
+  event.preventDefault();
+  try {
+    const parsed = parseServerLink(els.serverInput.value);
+    state.serverUrl = parsed.serverUrl;
+    state.apiToken = parsed.apiToken;
+    await setSetting(SERVER_KEY, parsed);
+    renderConnection();
+    await checkHealth();
+  } catch (error) {
+    log([error.message || 'Invalid runner link.']);
+  }
+}
+
+async function init() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(() => undefined);
+  }
+
+  state.db = await openDatabase();
+  state.clientId = await getSetting(CLIENT_KEY);
+  if (!state.clientId) {
+    state.clientId = makeClientId();
+    await setSetting(CLIENT_KEY, state.clientId);
+  }
+  const config = await getSetting(SERVER_KEY, { serverUrl: '', apiToken: '' });
+  state.serverUrl = config.serverUrl || '';
+  state.apiToken = config.apiToken || '';
+
+  els.tabs.forEach((tab) => tab.addEventListener('click', () => setActiveView(tab.dataset.view)));
+  els.serverForm.addEventListener('submit', saveServer);
+  els.downloadForm.addEventListener('submit', startDownload);
+  els.playlistSelect.addEventListener('change', () => {
+    state.selectedPlaylistId = els.playlistSelect.value || DEFAULT_PLAYLIST_ID;
+  });
+  els.libraryPlaylistSelect.addEventListener('change', () => {
+    state.libraryPlaylistId = els.libraryPlaylistSelect.value || ALL_PLAYLISTS_ID;
+    renderLibrary();
+  });
+  els.playlistAddButton.addEventListener('click', createPlaylist);
+  els.modeRadios.forEach((radio) => radio.addEventListener('change', updateDownloadButtonLabel));
+  els.closePlayerButton.addEventListener('click', closePlayer);
+  els.modeButton.addEventListener('click', switchPlayerMode);
+  els.nextButton.addEventListener('click', playNext);
+  els.previousButton.addEventListener('click', playPrevious);
+
+  await refreshPlaylists();
+  await refreshFiles();
+  renderConnection();
+  renderJob(null);
+  updateDownloadButtonLabel();
+  await requestPersistentStorage();
+  await checkHealth();
+}
+
+init().catch((error) => {
+  log([error.message || 'Could not start Media Vault.']);
+});

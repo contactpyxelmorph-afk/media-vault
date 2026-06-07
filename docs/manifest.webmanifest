@@ -1,0 +1,22 @@
+{
+  "name": "Media Vault",
+  "short_name": "Media Vault",
+  "description": "Offline media player for files downloaded through a home yt-dlp runner.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#061816",
+  "theme_color": "#061816",
+  "icons": [
+    {
+      "src": "./assets/icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png"
+    },
+    {
+      "src": "./assets/favicon.png",
+      "sizes": "48x48",
+      "type": "image/png"
+    }
+  ]
+}
