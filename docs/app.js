@@ -183,6 +183,21 @@ function parseServerLink(value) {
   return { serverUrl: normalizeServerUrl(parsed.toString()), apiToken: token };
 }
 
+function isHttpRunnerBlocked(serverUrl = state.serverUrl) {
+  if (!serverUrl || window.location.protocol !== 'https:') {
+    return false;
+  }
+  try {
+    return new URL(serverUrl).protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+function blockedHttpRunnerMessage() {
+  return 'Same-Wi-Fi HTTP runner links are blocked by iPhone because this app runs from HTTPS GitHub Pages. In the Windows runner, enable Internet tunnel for different Wi-Fi and paste the HTTPS trycloudflare.com link. That link also works while the phone and PC are on the same Wi-Fi.';
+}
+
 function serverLinkForDisplay() {
   if (!state.serverUrl) {
     return '';
@@ -206,6 +221,9 @@ function authHeaders(extra = {}) {
 }
 
 function runnerHelpMessage(error, action = 'request') {
+  if (isHttpRunnerBlocked()) {
+    return blockedHttpRunnerMessage();
+  }
   const message = error?.message || String(error || '');
   const lower = message.toLowerCase();
   if (lower.includes('load failed') || lower.includes('failed to fetch') || error instanceof TypeError) {
@@ -223,6 +241,7 @@ function setRunnerStatus(status, detail = '') {
     online: 'Online',
     offline: 'Offline',
     warning: 'Update runner',
+    blocked: 'Blocked HTTP',
   };
   const classes = ['status-muted', 'status-checking', 'status-online', 'status-offline', 'status-warning'];
   els.runnerStatusBadge.classList.remove(...classes);
@@ -231,6 +250,7 @@ function setRunnerStatus(status, detail = '') {
     online: 'status-online',
     offline: 'status-offline',
     warning: 'status-warning',
+    blocked: 'status-warning',
   }[status] || 'status-muted');
   els.runnerStatusBadge.textContent = labels[status] || 'Unknown';
   if (detail) {
@@ -241,6 +261,9 @@ function setRunnerStatus(status, detail = '') {
 async function apiJson(path, options = {}) {
   if (!state.serverUrl) {
     throw new Error('Save the home PC runner link first.');
+  }
+  if (isHttpRunnerBlocked()) {
+    throw new Error(blockedHttpRunnerMessage());
   }
   let response;
   try {
@@ -407,7 +430,13 @@ function renderConnection() {
   if (!state.serverUrl) {
     state.runnerSupportsPlaylists = null;
     els.connectionLabel.textContent = 'Offline player ready';
-    setRunnerStatus('unlinked', 'Start the Windows runner app on the home PC, then paste its different-Wi-Fi Cloudflare link when you are on 4G.');
+    setRunnerStatus('unlinked', 'Start the Windows runner app on the home PC, enable the Internet tunnel, then paste the HTTPS Cloudflare link.');
+    return;
+  }
+  if (isHttpRunnerBlocked()) {
+    state.runnerSupportsPlaylists = null;
+    els.connectionLabel.textContent = 'Same-Wi-Fi HTTP link blocked';
+    setRunnerStatus('blocked', blockedHttpRunnerMessage());
     return;
   }
   els.connectionLabel.textContent = `Runner set: ${state.serverUrl}`;
@@ -574,6 +603,16 @@ async function checkHealth({ silent = false } = {}) {
     renderConnection();
     if (!silent) {
       log(['Paste and save the Windows runner link first.']);
+    }
+    return false;
+  }
+  if (isHttpRunnerBlocked()) {
+    state.runnerSupportsPlaylists = null;
+    els.connectionLabel.textContent = 'Same-Wi-Fi HTTP link blocked';
+    const message = blockedHttpRunnerMessage();
+    setRunnerStatus('blocked', message);
+    if (!silent) {
+      log([message]);
     }
     return false;
   }
