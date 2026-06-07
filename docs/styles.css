@@ -66,16 +66,10 @@ button {
 }
 
 .brand-mark {
-  align-items: center;
-  background: var(--accent);
   border-radius: 8px;
-  color: #ffffff;
-  display: flex;
   flex: 0 0 auto;
-  font-size: 16px;
-  font-weight: 900;
   height: 48px;
-  justify-content: center;
+  object-fit: cover;
   width: 48px;
 }
 

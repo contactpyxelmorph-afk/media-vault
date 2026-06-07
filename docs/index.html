@@ -8,15 +8,16 @@
   <meta name="apple-mobile-web-app-title" content="Media Vault" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Media Vault</title>
-  <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="./assets/icon.png" />
-  <link rel="icon" href="./assets/favicon.png" />
-  <link rel="stylesheet" href="./styles.css?v=9" />
+  <link rel="manifest" href="./manifest.webmanifest?v=10" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./assets/apple-touch-icon.png" />
+  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="./assets/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="48x48" href="./assets/favicon.png" />
+  <link rel="stylesheet" href="./styles.css?v=10" />
 </head>
 <body>
   <main class="app">
     <header class="topbar">
-      <div class="brand-mark" aria-hidden="true">MV</div>
+      <img class="brand-mark" src="./assets/favicon.png" alt="" aria-hidden="true" />
       <div class="brand-copy">
         <h1>Media Vault</h1>
         <p id="connectionLabel">Offline player ready</p>
@@ -166,6 +167,6 @@
     </div>
   </section>
 
-  <script src="./app.js?v=9" type="module"></script>
+  <script src="./app.js?v=10" type="module"></script>
 </body>
 </html>

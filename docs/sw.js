@@ -1,11 +1,12 @@
-const CACHE_NAME = 'media-vault-shell-v9';
+const CACHE_NAME = 'media-vault-shell-v10';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=9',
-  './app.js?v=9',
-  './manifest.webmanifest',
+  './styles.css?v=10',
+  './app.js?v=10',
+  './manifest.webmanifest?v=10',
   './assets/icon.png',
+  './assets/apple-touch-icon.png',
   './assets/favicon.png',
 ];
 
