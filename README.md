@@ -124,6 +124,8 @@ The free PWA uses only `mp4` and `audio`.
 
 For a YouTube playlist URL, choose `Playlist` in the PWA before starting the download. The runner downloads every accessible playlist item, and the phone saves each returned MP4/MP3 file into the selected local playlist.
 
+If yt-dlp exits after downloading some playlist files, use `Recover Previous Job` in the PWA with the job id from the runner download path. This imports the already downloaded files without rerunning the playlist.
+
 ## Useful Checks
 
 Server health:

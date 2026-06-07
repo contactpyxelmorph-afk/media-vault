@@ -14,6 +14,8 @@ const els = {
   testServerButton: document.querySelector('#testServerButton'),
   downloadForm: document.querySelector('#downloadForm'),
   urlInput: document.querySelector('#urlInput'),
+  recoverForm: document.querySelector('#recoverForm'),
+  recoverJobInput: document.querySelector('#recoverJobInput'),
   playlistSelect: document.querySelector('#playlistSelect'),
   playlistNameInput: document.querySelector('#playlistNameInput'),
   playlistAddButton: document.querySelector('#playlistAddButton'),
@@ -686,6 +688,32 @@ async function downloadCompletedJob(job) {
   ]);
 }
 
+async function recoverPreviousJob(event) {
+  event.preventDefault();
+  const jobId = els.recoverJobInput.value.trim();
+  if (!/^[a-f0-9]{32}$/i.test(jobId)) {
+    log(['Enter the 32-character job id from the runner error path.']);
+    return;
+  }
+
+  const playlistId = state.selectedPlaylistId || DEFAULT_PLAYLIST_ID;
+  state.pendingJobs[jobId] = {
+    playlistId,
+    mode: selectedDownloadMode(),
+    noPlaylist: selectedNoPlaylist(),
+  };
+
+  try {
+    log([`Recovering existing runner files for job ${jobId}...`]);
+    const job = await apiJson(`/api/recover/${jobId}`, { method: 'POST' });
+    await downloadCompletedJob(job);
+    els.recoverJobInput.value = '';
+  } catch (error) {
+    delete state.pendingJobs[jobId];
+    log([runnerHelpMessage(error, 'Recovery request')]);
+  }
+}
+
 async function pollJob(jobId) {
   window.clearInterval(state.pollTimer);
   state.pollTimer = window.setInterval(async () => {
@@ -926,6 +954,7 @@ async function init() {
   els.serverForm.addEventListener('submit', saveServer);
   els.testServerButton.addEventListener('click', () => checkHealth({ silent: false }));
   els.downloadForm.addEventListener('submit', startDownload);
+  els.recoverForm.addEventListener('submit', recoverPreviousJob);
   els.playlistSelect.addEventListener('change', () => {
     state.selectedPlaylistId = els.playlistSelect.value || DEFAULT_PLAYLIST_ID;
   });

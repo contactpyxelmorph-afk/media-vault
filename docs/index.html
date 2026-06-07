@@ -11,7 +11,7 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./assets/icon.png" />
   <link rel="icon" href="./assets/favicon.png" />
-  <link rel="stylesheet" href="./styles.css?v=5" />
+  <link rel="stylesheet" href="./styles.css?v=6" />
 </head>
 <body>
   <main class="app">
@@ -100,6 +100,18 @@
         <pre id="logBox">Waiting for a download job.</pre>
       </section>
 
+      <form class="panel" id="recoverForm">
+        <div class="panel-title-row">
+          <h2>Recover Previous Job</h2>
+        </div>
+        <label for="recoverJobInput">Runner job id</label>
+        <div class="inline-control">
+          <input id="recoverJobInput" autocomplete="off" placeholder="bb9775e9724640c79553359f1cb8d940" />
+          <button type="submit">Recover</button>
+        </div>
+        <p class="hint">Use this when the runner downloaded files but the job ended with an error.</p>
+      </form>
+
       <section class="panel install-panel">
         <h2>Install Free</h2>
         <p>Open this page in Safari, tap Share, then Add to Home Screen. After the first load, the app shell opens offline.</p>
@@ -147,6 +159,6 @@
     </div>
   </section>
 
-  <script src="./app.js?v=5" type="module"></script>
+  <script src="./app.js?v=6" type="module"></script>
 </body>
 </html>

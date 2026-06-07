@@ -25,6 +25,7 @@ How it works:
 - App updates only refresh the cached app shell. They do not clear the media or playlist stores.
 - Each download can be saved as MP4 video or MP3 audio and assigned to a playlist before it starts.
 - For YouTube playlists, choose `Playlist` as the URL type. The runner downloads every item it can access, then the phone saves each returned file into the selected local playlist.
+- If a playlist job downloaded files but ended with an error, paste the job id into `Recover Previous Job`. The app will ask the runner to expose the already downloaded files so they can be saved to the phone.
 
 Limits:
 
