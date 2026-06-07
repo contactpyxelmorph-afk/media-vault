@@ -232,6 +232,10 @@ textarea {
   padding: 5px;
 }
 
+.format-segmented {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .radio-card {
   cursor: pointer;
   min-width: 0;
@@ -658,6 +662,10 @@ audio {
   .server-status-row,
   .recoverable-row,
   .media-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .format-segmented {
     grid-template-columns: 1fr;
   }
 

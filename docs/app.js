@@ -57,6 +57,7 @@ const state = {
   apiToken: '',
   runnerStatus: 'unlinked',
   runnerSupportsPlaylists: null,
+  runnerSupportsSpatial: null,
   files: [],
   playlists: [],
   selectedPlaylistId: DEFAULT_PLAYLIST_ID,
@@ -338,7 +339,30 @@ function mediaModeForFile(file) {
 }
 
 function modeLabel(mode) {
-  return mode === 'audio' ? 'MP3 audio' : 'MP4 video';
+  const labels = {
+    audio: 'MP3 audio',
+    mp4: 'MP4 video',
+    spatial: 'Spatial stereo',
+  };
+  return labels[mode] || 'MP4 video';
+}
+
+function fallbackExtensionForMode(mode) {
+  const extensions = {
+    audio: 'mp3',
+    mp4: 'mp4',
+    spatial: 'm4a',
+  };
+  return extensions[mode] || 'mp4';
+}
+
+function fallbackMimeForMode(mode) {
+  const mimes = {
+    audio: 'audio/mpeg',
+    mp4: 'video/mp4',
+    spatial: 'audio/mp4',
+  };
+  return mimes[mode] || 'video/mp4';
 }
 
 function selectedDownloadMode() {
@@ -354,7 +378,12 @@ function selectedNoPlaylist() {
 }
 
 function updateDownloadButtonLabel() {
-  const format = selectedDownloadMode() === 'audio' ? 'MP3' : 'MP4';
+  const labels = {
+    audio: 'MP3',
+    mp4: 'MP4',
+    spatial: 'Spatial',
+  };
+  const format = labels[selectedDownloadMode()] || 'MP4';
   const scope = selectedNoPlaylist() ? '' : ' Playlist';
   els.downloadButton.textContent = `Download${scope} ${format}`;
 }
@@ -429,12 +458,14 @@ function renderConnection() {
   els.serverInput.value = serverLinkForDisplay();
   if (!state.serverUrl) {
     state.runnerSupportsPlaylists = null;
+    state.runnerSupportsSpatial = null;
     els.connectionLabel.textContent = 'Offline player ready';
     setRunnerStatus('unlinked', 'Start the Windows runner app on the home PC, enable the Internet tunnel, then paste the HTTPS Cloudflare link.');
     return;
   }
   if (isHttpRunnerBlocked()) {
     state.runnerSupportsPlaylists = null;
+    state.runnerSupportsSpatial = null;
     els.connectionLabel.textContent = 'Same-Wi-Fi HTTP link blocked';
     setRunnerStatus('blocked', blockedHttpRunnerMessage());
     return;
@@ -608,6 +639,7 @@ async function checkHealth({ silent = false } = {}) {
   }
   if (isHttpRunnerBlocked()) {
     state.runnerSupportsPlaylists = null;
+    state.runnerSupportsSpatial = null;
     els.connectionLabel.textContent = 'Same-Wi-Fi HTTP link blocked';
     const message = blockedHttpRunnerMessage();
     setRunnerStatus('blocked', message);
@@ -620,6 +652,7 @@ async function checkHealth({ silent = false } = {}) {
   try {
     const health = await apiJson('/health');
     state.runnerSupportsPlaylists = health.playlist_files_supported === true;
+    state.runnerSupportsSpatial = health.spatial_audio_supported === true;
     if (!health.ok) {
       els.connectionLabel.textContent = 'Home runner unavailable';
       setRunnerStatus('offline', 'The runner answered, but did not report a healthy status.');
@@ -635,11 +668,16 @@ async function checkHealth({ silent = false } = {}) {
       setRunnerStatus('warning', 'Runner is online, but it does not report playlist support. Restart the updated Windows runner, then tap Test Link again.');
     }
     if (!silent) {
-      log([state.runnerSupportsPlaylists ? 'Runner link works. Playlist downloads are supported.' : 'Runner link works, but update/restart the runner for playlist downloads.']);
+      log([
+        state.runnerSupportsPlaylists
+          ? `Runner link works. Playlist downloads are supported${state.runnerSupportsSpatial ? ', including spatial stereo.' : '.'}`
+          : 'Runner link works, but update/restart the runner for playlist downloads.',
+      ]);
     }
     return true;
   } catch (error) {
     state.runnerSupportsPlaylists = null;
+    state.runnerSupportsSpatial = null;
     els.connectionLabel.textContent = 'Home runner unavailable; saved media still works';
     const message = runnerHelpMessage(error, 'Runner test');
     setRunnerStatus('offline', message);
@@ -669,7 +707,7 @@ function renderJob(job) {
 }
 
 function jobMediaItems(job, sourceMode) {
-  const fallbackName = job.playback_name || job.output_name || `${job.id}.${sourceMode === 'audio' ? 'mp3' : 'mp4'}`;
+  const fallbackName = job.playback_name || job.output_name || `${job.id}.${fallbackExtensionForMode(sourceMode)}`;
   const files = Array.isArray(job.files) && job.files.length > 0
     ? job.files
     : [{
@@ -728,7 +766,7 @@ async function downloadCompletedJob(job) {
   let totalBytes = 0;
 
   for (const item of mediaItems) {
-    const mediaName = item.mediaName || `${job.id}-${item.index}.${sourceMode === 'audio' ? 'mp3' : 'mp4'}`;
+    const mediaName = item.mediaName || `${job.id}-${item.index}.${fallbackExtensionForMode(sourceMode)}`;
     const fileName = safeName(mediaName);
     const sourceUrl = sourceUrlForJobItem(job, item);
 
@@ -763,7 +801,7 @@ async function downloadCompletedJob(job) {
       playlistId,
       title: titleFromFileName(item.titleName || mediaName),
       fileName,
-      mimeType: blob.type || (sourceMode === 'audio' ? 'audio/mpeg' : 'video/mp4'),
+      mimeType: blob.type || fallbackMimeForMode(sourceMode),
       size: blob.size,
       blob,
       createdAt: new Date().toISOString(),
@@ -920,6 +958,17 @@ async function startDownload(event) {
     log([`That URL is already saved as ${modeLabel(mode)} on this phone.`]);
     setActiveView('library');
     return;
+  }
+  if (mode === 'spatial' && state.runnerSupportsSpatial !== true) {
+    const online = await checkHealth({ silent: true });
+    if (!online) {
+      log(['Spatial stereo download blocked because the runner link is not reachable. Tap Test Link and fix the runner connection first.']);
+      return;
+    }
+    if (state.runnerSupportsSpatial !== true) {
+      log(['Spatial stereo download blocked because the runner is old. Restart the updated Windows runner, then tap Test Link again.']);
+      return;
+    }
   }
   if (!noPlaylist && state.runnerSupportsPlaylists !== true) {
     const online = await checkHealth({ silent: true });
