@@ -229,6 +229,7 @@ textarea {
 
 .inline-control button,
 .primary,
+.secondary,
 .row-actions button,
 .transport button,
 .mode-button {
@@ -242,6 +243,18 @@ textarea {
 
 .primary {
   width: 100%;
+}
+
+.secondary {
+  background: #33454d;
+  min-height: 40px;
+}
+
+.server-status-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto 1fr;
 }
 
 .panel-title-row {
@@ -258,6 +271,31 @@ textarea {
   font-size: 12px;
   font-weight: 900;
   padding: 6px 9px;
+}
+
+.status-online {
+  background: #d9f4e7;
+  color: #145c37;
+}
+
+.status-offline {
+  background: #ffe2df;
+  color: #8a241c;
+}
+
+.status-checking {
+  background: #fff3cf;
+  color: #795600;
+}
+
+.status-warning {
+  background: #ffe8c2;
+  color: #7d4400;
+}
+
+.status-muted {
+  background: #edf2f4;
+  color: #40515a;
 }
 
 progress {
@@ -466,5 +504,11 @@ audio {
 
   .form-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 420px) {
+  .server-status-row {
+    grid-template-columns: 1fr;
   }
 }

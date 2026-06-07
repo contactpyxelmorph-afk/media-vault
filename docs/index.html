@@ -11,7 +11,7 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./assets/icon.png" />
   <link rel="icon" href="./assets/favicon.png" />
-  <link rel="stylesheet" href="./styles.css?v=4" />
+  <link rel="stylesheet" href="./styles.css?v=5" />
 </head>
 <body>
   <main class="app">
@@ -30,12 +30,19 @@
 
     <section class="view active" id="downloadView">
       <form class="panel" id="serverForm">
+        <div class="panel-title-row">
+          <h2>Runner Connection</h2>
+          <span id="runnerStatusBadge" class="badge status-muted">Not linked</span>
+        </div>
         <label for="serverInput">Home PC runner link</label>
         <div class="inline-control">
           <input id="serverInput" inputmode="url" autocomplete="url" placeholder="https://...trycloudflare.com?token=..." />
           <button type="submit">Save</button>
         </div>
-        <p class="hint">Start the Windows runner app on the home PC, then paste its different-Wi-Fi Cloudflare link when you are on 4G.</p>
+        <div class="server-status-row">
+          <button id="testServerButton" class="secondary" type="button">Test Link</button>
+          <p id="serverStatusDetail" class="hint">Start the Windows runner app on the home PC, then paste its different-Wi-Fi Cloudflare link when you are on 4G.</p>
+        </div>
       </form>
 
       <form class="panel" id="downloadForm">
@@ -140,6 +147,6 @@
     </div>
   </section>
 
-  <script src="./app.js?v=4" type="module"></script>
+  <script src="./app.js?v=5" type="module"></script>
 </body>
 </html>

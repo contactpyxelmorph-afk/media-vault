@@ -9,6 +9,9 @@ const els = {
   connectionLabel: document.querySelector('#connectionLabel'),
   serverForm: document.querySelector('#serverForm'),
   serverInput: document.querySelector('#serverInput'),
+  runnerStatusBadge: document.querySelector('#runnerStatusBadge'),
+  serverStatusDetail: document.querySelector('#serverStatusDetail'),
+  testServerButton: document.querySelector('#testServerButton'),
   downloadForm: document.querySelector('#downloadForm'),
   urlInput: document.querySelector('#urlInput'),
   playlistSelect: document.querySelector('#playlistSelect'),
@@ -45,6 +48,8 @@ const state = {
   clientId: '',
   serverUrl: '',
   apiToken: '',
+  runnerStatus: 'unlinked',
+  runnerSupportsPlaylists: null,
   files: [],
   playlists: [],
   selectedPlaylistId: DEFAULT_PLAYLIST_ID,
@@ -191,14 +196,52 @@ function authHeaders(extra = {}) {
   };
 }
 
+function runnerHelpMessage(error, action = 'request') {
+  const message = error?.message || String(error || '');
+  const lower = message.toLowerCase();
+  if (lower.includes('load failed') || lower.includes('failed to fetch') || error instanceof TypeError) {
+    return `${action} failed: the phone cannot reach the Windows runner. Check that the runner is ON, the different-Wi-Fi Cloudflare link is current, the link was pasted fully including token, and the runner was restarted after the playlist update.`;
+  }
+  return message || `${action} failed.`;
+}
+
+function setRunnerStatus(status, detail = '') {
+  state.runnerStatus = status;
+  const labels = {
+    unlinked: 'Not linked',
+    saved: 'Link saved',
+    checking: 'Checking',
+    online: 'Online',
+    offline: 'Offline',
+    warning: 'Update runner',
+  };
+  const classes = ['status-muted', 'status-checking', 'status-online', 'status-offline', 'status-warning'];
+  els.runnerStatusBadge.classList.remove(...classes);
+  els.runnerStatusBadge.classList.add({
+    checking: 'status-checking',
+    online: 'status-online',
+    offline: 'status-offline',
+    warning: 'status-warning',
+  }[status] || 'status-muted');
+  els.runnerStatusBadge.textContent = labels[status] || 'Unknown';
+  if (detail) {
+    els.serverStatusDetail.textContent = detail;
+  }
+}
+
 async function apiJson(path, options = {}) {
   if (!state.serverUrl) {
     throw new Error('Save the home PC runner link first.');
   }
-  const response = await fetch(`${state.serverUrl}${path}`, {
-    ...options,
-    headers: authHeaders(options.headers || {}),
-  });
+  let response;
+  try {
+    response = await fetch(`${state.serverUrl}${path}`, {
+      ...options,
+      headers: authHeaders(options.headers || {}),
+    });
+  } catch (error) {
+    throw new Error(runnerHelpMessage(error, 'Runner request'));
+  }
   if (!response.ok) {
     const text = await response.text();
     let detail = text;
@@ -207,6 +250,10 @@ async function apiJson(path, options = {}) {
     } catch {
     }
     throw new Error(detail || `HTTP ${response.status}`);
+  }
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error('Runner link did not return app data. Paste the exact link from the Windows runner, not a browser warning page or GitHub page.');
   }
   return response.json();
 }
@@ -319,9 +366,16 @@ function setActiveView(viewName) {
 
 function renderConnection() {
   els.serverInput.value = serverLinkForDisplay();
-  els.connectionLabel.textContent = state.serverUrl
-    ? `Runner set: ${state.serverUrl}`
-    : 'Offline player ready';
+  if (!state.serverUrl) {
+    state.runnerSupportsPlaylists = null;
+    els.connectionLabel.textContent = 'Offline player ready';
+    setRunnerStatus('unlinked', 'Start the Windows runner app on the home PC, then paste its different-Wi-Fi Cloudflare link when you are on 4G.');
+    return;
+  }
+  els.connectionLabel.textContent = `Runner set: ${state.serverUrl}`;
+  if (state.runnerStatus === 'unlinked') {
+    setRunnerStatus('saved', 'Runner link saved. Tap Test Link to verify the phone can reach it.');
+  }
 }
 
 function renderPlaylistControls() {
@@ -452,16 +506,45 @@ async function createPlaylist() {
   log([`Playlist created: ${playlist.name}`]);
 }
 
-async function checkHealth() {
+async function checkHealth({ silent = false } = {}) {
   if (!state.serverUrl) {
     renderConnection();
-    return;
+    if (!silent) {
+      log(['Paste and save the Windows runner link first.']);
+    }
+    return false;
   }
+  setRunnerStatus('checking', 'Checking the Windows runner link...');
   try {
     const health = await apiJson('/health');
-    els.connectionLabel.textContent = health.ok ? `Home runner online · yt-dlp ${health.yt_dlp_version || ''}` : 'Home runner unavailable';
-  } catch {
+    state.runnerSupportsPlaylists = health.playlist_files_supported === true;
+    if (!health.ok) {
+      els.connectionLabel.textContent = 'Home runner unavailable';
+      setRunnerStatus('offline', 'The runner answered, but did not report a healthy status.');
+      return false;
+    }
+    els.connectionLabel.textContent = `Home runner online · yt-dlp ${health.yt_dlp_version || ''}`;
+    if (state.runnerSupportsPlaylists) {
+      setRunnerStatus(
+        'online',
+        `Connected to runner. Playlist downloads supported. FFmpeg ${health.ffmpeg_available ? 'available' : 'not detected'}.`,
+      );
+    } else {
+      setRunnerStatus('warning', 'Runner is online, but it does not report playlist support. Restart the updated Windows runner, then tap Test Link again.');
+    }
+    if (!silent) {
+      log([state.runnerSupportsPlaylists ? 'Runner link works. Playlist downloads are supported.' : 'Runner link works, but update/restart the runner for playlist downloads.']);
+    }
+    return true;
+  } catch (error) {
+    state.runnerSupportsPlaylists = null;
     els.connectionLabel.textContent = 'Home runner unavailable; saved media still works';
+    const message = runnerHelpMessage(error, 'Runner test');
+    setRunnerStatus('offline', message);
+    if (!silent) {
+      log([message]);
+    }
+    return false;
   }
 }
 
@@ -557,9 +640,14 @@ async function downloadCompletedJob(job) {
       mediaName,
       ...(job.log || []),
     ]);
-    const response = await fetch(item.mediaUrl, {
-      headers: authHeaders({ Accept: '*/*' }),
-    });
+    let response;
+    try {
+      response = await fetch(item.mediaUrl, {
+        headers: authHeaders({ Accept: '*/*' }),
+      });
+    } catch (error) {
+      throw new Error(runnerHelpMessage(error, `Saving ${mediaName}`));
+    }
     if (!response.ok) {
       throw new Error(`Could not save ${mediaName}: HTTP ${response.status}`);
     }
@@ -613,7 +701,7 @@ async function pollJob(jobId) {
       }
     } catch (error) {
       window.clearInterval(state.pollTimer);
-      log([error.message || 'Connection failed.']);
+      log([runnerHelpMessage(error, 'Job status check')]);
     }
   }, 2000);
 }
@@ -633,6 +721,17 @@ async function startDownload(event) {
     setActiveView('library');
     return;
   }
+  if (!noPlaylist && state.runnerSupportsPlaylists !== true) {
+    const online = await checkHealth({ silent: true });
+    if (!online) {
+      log(['Playlist download blocked because the runner link is not reachable. Tap Test Link and fix the runner connection first.']);
+      return;
+    }
+    if (state.runnerSupportsPlaylists !== true) {
+      log(['Playlist download blocked because the runner is old. Restart the updated Windows runner, then tap Test Link again.']);
+      return;
+    }
+  }
 
   els.downloadButton.disabled = true;
   try {
@@ -650,7 +749,7 @@ async function startDownload(event) {
     ]);
     await pollJob(job.id);
   } catch (error) {
-    log([error.message || 'Could not start download.']);
+    log([runnerHelpMessage(error, 'Download request')]);
   } finally {
     els.downloadButton.disabled = false;
   }
@@ -797,11 +896,14 @@ async function saveServer(event) {
     const parsed = parseServerLink(els.serverInput.value);
     state.serverUrl = parsed.serverUrl;
     state.apiToken = parsed.apiToken;
+    state.runnerSupportsPlaylists = null;
     await setSetting(SERVER_KEY, parsed);
     renderConnection();
-    await checkHealth();
+    await checkHealth({ silent: false });
   } catch (error) {
-    log([error.message || 'Invalid runner link.']);
+    const message = error.message || 'Invalid runner link.';
+    setRunnerStatus('offline', message);
+    log([message]);
   }
 }
 
@@ -822,6 +924,7 @@ async function init() {
 
   els.tabs.forEach((tab) => tab.addEventListener('click', () => setActiveView(tab.dataset.view)));
   els.serverForm.addEventListener('submit', saveServer);
+  els.testServerButton.addEventListener('click', () => checkHealth({ silent: false }));
   els.downloadForm.addEventListener('submit', startDownload);
   els.playlistSelect.addEventListener('change', () => {
     state.selectedPlaylistId = els.playlistSelect.value || DEFAULT_PLAYLIST_ID;
@@ -844,7 +947,7 @@ async function init() {
   renderJob(null);
   updateDownloadButtonLabel();
   await requestPersistentStorage();
-  await checkHealth();
+  await checkHealth({ silent: true });
 }
 
 init().catch((error) => {

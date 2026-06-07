@@ -20,6 +20,7 @@ How it works:
 - Saved files play without the PC or the runner.
 - New downloads still need the Windows runner on the home PC.
 - When away from home, paste the runner's `different Wi-Fi` Cloudflare link into the Home PC runner field.
+- Use `Test Link` in the Runner Connection panel before starting a download. It should show `Online`.
 - Because GitHub Pages is HTTPS, use the runner's HTTPS Cloudflare link. Browser security may block a plain `http://192.168...` same-Wi-Fi link from an HTTPS PWA.
 - App updates only refresh the cached app shell. They do not clear the media or playlist stores.
 - Each download can be saved as MP4 video or MP3 audio and assigned to a playlist before it starts.

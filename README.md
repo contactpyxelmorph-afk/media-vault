@@ -26,6 +26,8 @@ This gives you:
 
 New downloads still need the home PC runner to be on. When the phone is on 4G, use the Windows runner's `different Wi-Fi` Cloudflare link in the PWA's Home PC runner field. Because GitHub Pages is HTTPS, prefer that HTTPS Cloudflare link over a plain same-Wi-Fi `http://192.168...` link.
 
+After pasting a runner link, tap `Test Link` in the PWA. It should show `Online`; if it says `Update runner`, restart the updated Windows runner before using playlist downloads.
+
 See `docs/README.md`.
 
 ## PC-Off Setup
