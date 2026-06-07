@@ -460,6 +460,53 @@ pre {
   grid-template-columns: repeat(2, minmax(86px, auto));
 }
 
+.recover-scan-actions {
+  grid-template-columns: 1fr 1fr;
+}
+
+.recoverable-list {
+  display: grid;
+  gap: 8px;
+}
+
+.recoverable-row {
+  align-items: center;
+  background: var(--soft);
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px;
+}
+
+.recoverable-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.recoverable-row h3 {
+  font-size: 15px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.recoverable-row p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.recoverable-row button {
+  background: var(--accent);
+  border-radius: 8px;
+  color: #ffffff;
+  font-weight: 900;
+  min-height: 44px;
+  padding: 0 13px;
+}
+
 .row-actions .rename {
   background: var(--dark-soft);
 }
@@ -609,6 +656,7 @@ audio {
 @media (max-width: 520px) {
   .inline-control,
   .server-status-row,
+  .recoverable-row,
   .media-controls {
     grid-template-columns: 1fr;
   }

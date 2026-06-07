@@ -16,6 +16,9 @@ const els = {
   urlInput: document.querySelector('#urlInput'),
   recoverForm: document.querySelector('#recoverForm'),
   recoverJobInput: document.querySelector('#recoverJobInput'),
+  scanRecoverButton: document.querySelector('#scanRecoverButton'),
+  recoverAllButton: document.querySelector('#recoverAllButton'),
+  recoverableJobsList: document.querySelector('#recoverableJobsList'),
   playlistSelect: document.querySelector('#playlistSelect'),
   playlistNameInput: document.querySelector('#playlistNameInput'),
   playlistAddButton: document.querySelector('#playlistAddButton'),
@@ -60,6 +63,7 @@ const state = {
   libraryPlaylistId: ALL_PLAYLISTS_ID,
   librarySearchQuery: '',
   activeJob: null,
+  recoverableJobs: [],
   pendingJobs: {},
   pollTimer: null,
   objectUrl: '',
@@ -745,26 +749,22 @@ async function downloadCompletedJob(job) {
   ]);
 }
 
-async function recoverPreviousJob(event) {
-  event.preventDefault();
-  const jobId = els.recoverJobInput.value.trim();
-  if (!/^[a-f0-9]{32}$/i.test(jobId)) {
-    log(['Enter the 32-character job id from the runner error path.']);
-    return;
-  }
-
+function setPendingRecovery(jobId) {
   const playlistId = state.selectedPlaylistId || DEFAULT_PLAYLIST_ID;
   state.pendingJobs[jobId] = {
     playlistId,
     mode: selectedDownloadMode(),
-    noPlaylist: selectedNoPlaylist(),
+    noPlaylist: false,
   };
+}
 
+async function recoverJobId(jobId) {
+  setPendingRecovery(jobId);
   try {
     log([`Recovering existing runner files for job ${jobId}...`]);
     const job = await apiJson(`/api/recover/${jobId}`, { method: 'POST' });
     await downloadCompletedJob(job);
-    els.recoverJobInput.value = '';
+    return true;
   } catch (error) {
     delete state.pendingJobs[jobId];
     const message = (error?.message || '').trim();
@@ -776,6 +776,74 @@ async function recoverPreviousJob(event) {
     log([
       recoveryMessage,
     ]);
+    return false;
+  }
+}
+
+function renderRecoverableJobs() {
+  els.recoverAllButton.disabled = state.recoverableJobs.length === 0;
+  els.recoverableJobsList.innerHTML = '';
+
+  state.recoverableJobs.forEach((job) => {
+    const row = document.createElement('article');
+    row.className = 'recoverable-row';
+    row.innerHTML = `
+      <div class="recoverable-copy">
+        <h3></h3>
+        <p></p>
+      </div>
+      <button type="button">Recover</button>
+    `;
+    row.querySelector('h3').textContent = `${job.file_count} file${job.file_count === 1 ? '' : 's'} · ${formatBytes(job.total_size || 0)}`;
+    row.querySelector('p').textContent = (job.sample_titles || []).join(' · ') || job.job_id;
+    row.querySelector('button').addEventListener('click', () => recoverJobId(job.job_id));
+    els.recoverableJobsList.append(row);
+  });
+}
+
+async function scanRecoverableJobs() {
+  try {
+    log(['Scanning PC runner downloads...']);
+    const jobs = await apiJson('/api/recoverable');
+    state.recoverableJobs = Array.isArray(jobs) ? jobs : [];
+    renderRecoverableJobs();
+    log([
+      state.recoverableJobs.length > 0
+        ? `Found ${state.recoverableJobs.length} recoverable runner job${state.recoverableJobs.length === 1 ? '' : 's'}.`
+        : 'No recoverable PC downloads were found by this runner.',
+    ]);
+  } catch (error) {
+    log([runnerHelpMessage(error, 'Recovery scan')]);
+  }
+}
+
+async function recoverAllJobs() {
+  if (state.recoverableJobs.length === 0) {
+    return;
+  }
+  const totalBytes = state.recoverableJobs.reduce((sum, job) => sum + (job.total_size || 0), 0);
+  if (!confirm(`Recover ${state.recoverableJobs.length} runner jobs to this phone? This can use about ${formatBytes(totalBytes)} of storage.`)) {
+    return;
+  }
+
+  els.recoverAllButton.disabled = true;
+  for (const job of state.recoverableJobs) {
+    await recoverJobId(job.job_id);
+  }
+  els.recoverAllButton.disabled = false;
+}
+
+async function recoverPreviousJob(event) {
+  event.preventDefault();
+  const jobId = els.recoverJobInput.value.trim();
+  if (!/^[a-f0-9]{32}$/i.test(jobId)) {
+    log(['Enter the 32-character job id from the runner error path.']);
+    return;
+  }
+
+  const recovered = await recoverJobId(jobId);
+  if (recovered) {
+    els.recoverJobInput.value = '';
   }
 }
 
@@ -1020,6 +1088,8 @@ async function init() {
   els.testServerButton.addEventListener('click', () => checkHealth({ silent: false }));
   els.downloadForm.addEventListener('submit', startDownload);
   els.recoverForm.addEventListener('submit', recoverPreviousJob);
+  els.scanRecoverButton.addEventListener('click', scanRecoverableJobs);
+  els.recoverAllButton.addEventListener('click', recoverAllJobs);
   els.playlistSelect.addEventListener('change', () => {
     state.selectedPlaylistId = els.playlistSelect.value || DEFAULT_PLAYLIST_ID;
   });
