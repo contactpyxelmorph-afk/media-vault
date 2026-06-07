@@ -27,6 +27,8 @@ const els = {
   logBox: document.querySelector('#logBox'),
   storageLabel: document.querySelector('#storageLabel'),
   libraryPlaylistSelect: document.querySelector('#libraryPlaylistSelect'),
+  librarySearchInput: document.querySelector('#librarySearchInput'),
+  librarySearchStatus: document.querySelector('#librarySearchStatus'),
   libraryList: document.querySelector('#libraryList'),
   tabs: [...document.querySelectorAll('.tab')],
   views: {
@@ -56,6 +58,7 @@ const state = {
   playlists: [],
   selectedPlaylistId: DEFAULT_PLAYLIST_ID,
   libraryPlaylistId: ALL_PLAYLISTS_ID,
+  librarySearchQuery: '',
   activeJob: null,
   pendingJobs: {},
   pollTimer: null,
@@ -337,11 +340,37 @@ function playlistName(id) {
   return state.playlists.find((playlist) => playlist.id === id)?.name || 'Main Library';
 }
 
+function libraryFilterName() {
+  return state.libraryPlaylistId === ALL_PLAYLISTS_ID ? 'All playlists' : playlistName(state.libraryPlaylistId);
+}
+
 function currentLibraryFiles() {
   if (state.libraryPlaylistId === ALL_PLAYLISTS_ID) {
     return state.files;
   }
   return state.files.filter((file) => playlistIdForFile(file) === state.libraryPlaylistId);
+}
+
+function normalizedSearchText(value) {
+  return (value || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function filteredLibraryFiles() {
+  const files = currentLibraryFiles();
+  const query = normalizedSearchText(state.librarySearchQuery);
+  if (!query) {
+    return files;
+  }
+  return files.filter((file) => {
+    const title = normalizedSearchText(file.title);
+    const fileName = normalizedSearchText(file.fileName);
+    return title.includes(query) || fileName.includes(query);
+  });
 }
 
 function makePlaylistId() {
@@ -402,15 +431,34 @@ function renderPlaylistControls() {
 }
 
 function renderLibrary() {
-  const visibleFiles = currentLibraryFiles();
-  els.storageLabel.textContent = state.libraryPlaylistId === ALL_PLAYLISTS_ID
-    ? `${state.files.length} file${state.files.length === 1 ? '' : 's'}`
-    : `${visibleFiles.length} / ${state.files.length}`;
+  const playlistFiles = currentLibraryFiles();
+  const visibleFiles = filteredLibraryFiles();
+  const query = state.librarySearchQuery.trim();
+  if (els.librarySearchInput && els.librarySearchInput.value !== state.librarySearchQuery) {
+    els.librarySearchInput.value = state.librarySearchQuery;
+  }
 
-  if (visibleFiles.length === 0) {
+  if (query) {
+    els.storageLabel.textContent = `${visibleFiles.length} found`;
+    els.librarySearchStatus.textContent = `Showing ${visibleFiles.length} of ${playlistFiles.length} song${playlistFiles.length === 1 ? '' : 's'} matching "${query}".`;
+  } else {
+    els.storageLabel.textContent = state.libraryPlaylistId === ALL_PLAYLISTS_ID
+      ? `${state.files.length} file${state.files.length === 1 ? '' : 's'}`
+      : `${playlistFiles.length} / ${state.files.length}`;
+    els.librarySearchStatus.textContent = playlistFiles.length > 0
+      ? `${libraryFilterName()} is sorted in download order.`
+      : '';
+  }
+
+  if (playlistFiles.length === 0) {
     els.libraryList.innerHTML = state.files.length === 0
       ? '<p class="empty">No files saved on this phone yet.</p>'
       : '<p class="empty">No files saved in this playlist yet.</p>';
+    return;
+  }
+
+  if (visibleFiles.length === 0) {
+    els.libraryList.innerHTML = '<p class="empty">No songs match this search.</p>';
     return;
   }
 
@@ -419,21 +467,27 @@ function renderLibrary() {
     const row = document.createElement('article');
     row.className = 'media-row';
     row.innerHTML = `
-      <h3></h3>
-      <div class="media-meta">
-        <span class="playlist-pill"></span>
-        <p></p>
+      <div class="media-main">
+        <button class="play media-play" type="button">Play</button>
+        <div class="media-copy">
+          <h3></h3>
+          <div class="media-meta">
+            <span class="playlist-pill"></span>
+            <p></p>
+          </div>
+        </div>
       </div>
-      <div class="field-group">
-        <label>Playlist</label>
-        <select class="playlist-move"></select>
+      <div class="media-controls">
+        <div class="field-group">
+          <label>Playlist</label>
+          <select class="playlist-move"></select>
+        </div>
+        <div class="row-actions">
+          <button class="rename" type="button">Rename</button>
+          <button class="delete" type="button">Delete</button>
+        </div>
       </div>
       <input class="rename-input" />
-      <div class="row-actions">
-        <button class="play" type="button">Play</button>
-        <button class="rename" type="button">Rename</button>
-        <button class="delete" type="button">Delete</button>
-      </div>
     `;
     row.querySelector('h3').textContent = file.title;
     row.querySelector('.playlist-pill').textContent = playlistName(playlistIdForFile(file));
@@ -448,7 +502,7 @@ function renderLibrary() {
       await saveFileRecord(file);
       await refreshFiles();
     });
-    row.querySelector('.play').addEventListener('click', () => playFile(file, 0, true, currentLibraryFiles()));
+    row.querySelector('.play').addEventListener('click', () => playFile(file, 0, true, filteredLibraryFiles()));
     row.querySelector('.rename').addEventListener('click', async () => {
       if (!row.classList.contains('editing')) {
         row.classList.add('editing');
@@ -971,6 +1025,10 @@ async function init() {
   });
   els.libraryPlaylistSelect.addEventListener('change', () => {
     state.libraryPlaylistId = els.libraryPlaylistSelect.value || ALL_PLAYLISTS_ID;
+    renderLibrary();
+  });
+  els.librarySearchInput.addEventListener('input', () => {
+    state.librarySearchQuery = els.librarySearchInput.value;
     renderLibrary();
   });
   els.playlistAddButton.addEventListener('click', createPlaylist);
